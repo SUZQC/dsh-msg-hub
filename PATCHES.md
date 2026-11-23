@@ -20,6 +20,7 @@
 | A7 | `lib/qq/adapter.js` `sendQqText` | 平台不回推机器人自己发的消息 → 上游没有任何地方记录“机器人说了什么”，群聊记忆只有单边 | 发送成功后补一行 `- HH:MM <机器人名>: …` 到原文（多行压成一行，≤300 字） |
 | A8 | `lib/qq/adapter.js` 群消息 | 全量群消息模式下没有任何可观测日志，分不清“平台没推”还是“推了没处理” | `rawEvent` 打每个 dispatch 事件类型；群消息打 `author=` 诊断行 |
 | A9 | `lib/qq/adapter.js` 文件消息 | 文件消息 `content` 为空，附件永远不会被解析，用户问文件时模型只能编 | 下载附件 → 抽正文 → 落盘 → 只在被问时注入（见 B5） |
+| A10 | `package.json` `engines` | 只声明 `peerDependencies: ^0.1.0-rc.6`，任何 `0.2.x` DSH 都不满足 → 插件显示“异常”、`enabled` 但根本不加载。`dsh.compatibility.dshReleases` 只是给人看的，加载器不读它（见 `dsh-app-boot/src/plugin-compatibility.ts`：`engines.dsh` 优先，没有才逐个查 dsh peers，`semver.satisfies(…, { includePrerelease: true })`） | 加 `"engines": { "dsh": "^0.2.2-rc.5" }`。`engines.dsh` 一旦存在就单独裁决，peers 不再参与；`^0.2.2-rc.5` 在 `includePrerelease` 下覆盖整个 `0.2.x`（含 rc.6、0.2.3-rc.1） |
 
 > A9 是“功能缺失 + 会诱发编造”，修法牵涉较多本地约定（落盘路径、检索策略），整体放进了 B5。
 
