@@ -70,6 +70,8 @@ const EXTRACT_EXTS = new Set([".docx", ".xlsx", ".pptx", ".txt", ".md", ".csv", 
 const MAX_BYTES = 20 * 1024 * 1024; // 与 adapter 的 FILE_MAX_BYTES 一致
 const BODY_LIMIT = 20000; // 与 rememberGroupFile 一致
 const DRY_RUN = process.argv.includes("--dry-run");
+// 补历史时绕开“今天的完成标记”检查
+const IGNORE_DONE = process.env.OBSIDIAN_IGNORE_DONE === "1" || process.argv.includes("--ignore-done");
 
 // ── 小工具 ──────────────────────────────────────────────────
 
@@ -292,6 +294,23 @@ async function main() {
   if (PROXY) log(`代理 ${PROXY}`);
 
   const { cloned } = ensureRepo();
+
+  // 上游 21:00 启动、等文档最多 45 分钟，所以完成时间会浮动。
+  // 上游在同一次 commit 里写 日报/YYYY/MM/.done-YYYY.MM.DD，见到它才算今天齐了。
+  if (!IGNORE_DONE) {
+    const d = new Date();
+    const y = String(d.getFullYear());
+    const mo = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    const markerRel = `${CFG.sparse}/${y}/${mo}/.done-${y}.${mo}.${day}`;
+    const markerAbs = path.join(CFG.clone, ...markerRel.split("/"));
+    if (!fs.existsSync(markerAbs)) {
+      log(`今天的完成标记还没出现：${markerRel}`);
+      log("上游可能还在等文档（最多 45 分钟），本次退出，交给外层 10 分钟后再试");
+      process.exit(2);
+    }
+  }
+
   const { head, files } = changedPaths();
 
   if (files.length === 0) {
