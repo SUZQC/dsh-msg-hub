@@ -59,6 +59,13 @@ const CFG = {
 };
 
 const STATE_FILE = `${CFG.clone}.state.json`;
+// GitHub 在这台机器上被 hosts 指到 127.0.0.1，只能走本地代理：
+// CONNECT 由代理自己解析域名，不碰 hosts。没设代理时保持原样（直连）。
+const PROXY =
+  process.env.OBSIDIAN_HTTP_PROXY?.trim() ||
+  process.env.HTTPS_PROXY?.trim() ||
+  process.env.HTTP_PROXY?.trim() ||
+  "";
 const EXTRACT_EXTS = new Set([".docx", ".xlsx", ".pptx", ".txt", ".md", ".csv", ".json"]);
 const MAX_BYTES = 20 * 1024 * 1024; // 与 adapter 的 FILE_MAX_BYTES 一致
 const BODY_LIMIT = 20000; // 与 rememberGroupFile 一致
@@ -77,7 +84,8 @@ function die(msg) {
 
 /** 跑 git：禁掉交互提示（定时任务里不能弹认证窗），中文路径不转义 */
 function git(args, { cwd = CFG.clone, timeout = 120_000 } = {}) {
-  const res = spawnSync("git", ["-c", "core.quotepath=false", ...args], {
+  const proxyArgs = PROXY ? ["-c", `http.proxy=${PROXY}`] : [];
+  const res = spawnSync("git", ["-c", "core.quotepath=false", ...proxyArgs, ...args], {
     cwd,
     encoding: "utf8",
     timeout,
@@ -219,6 +227,21 @@ function fileStamp(relPath) {
   return stampOf(iso);
 }
 
+/**
+ * 文件名开头的日期优先：`2026.11.22-AI 日报.md` → 2026-11-22。
+ * 归档会补录前几天的日报（一个提交里带 3 天），这时提交时间≠报告日期，
+ * 所以有前缀就用前缀，没有才退回提交时间。
+ */
+function dateFromName(base) {
+  const m = String(base).match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return `${y}-${pad(mo)}-${pad(d)}`;
+}
+
 // ── 落盘 ────────────────────────────────────────────────────
 
 function groupFileDir() {
@@ -266,6 +289,7 @@ function archiveOriginal(date, relPath, srcFile) {
 async function main() {
   log(`仓库 ${CFG.repo}`);
   log(`克隆 ${CFG.clone}｜稀疏 ${CFG.sparse}/｜群 ${CFG.groupKey.slice(0, 8)}…`);
+  if (PROXY) log(`代理 ${PROXY}`);
 
   const { cloned } = ensureRepo();
   const { head, files } = changedPaths();
@@ -308,14 +332,17 @@ async function main() {
       continue;
     }
 
-    if (existingSrcs(stamp.date).has(rel)) {
-      log(`已入库，跳过：${stamp.date} ${base}`);
+    // 日期优先取文件名前缀（补录时提交时间会失真），没有才用提交时间
+    const date = dateFromName(base) || stamp.date;
+
+    if (existingSrcs(date).has(rel)) {
+      log(`已入库，跳过：${date} ${base}`);
       skipped += 1;
       continue;
     }
 
     if (DRY_RUN) {
-      log(`[dry-run] ${stamp.date} ${stamp.hhmm} 会处理：${rel}`);
+      log(`[dry-run] ${date} ${stamp.hhmm} 会处理：${rel}`);
       done += 1;
       continue;
     }
@@ -324,8 +351,8 @@ async function main() {
     if (!body) {
       log(`未解析出正文（原件仍会归档）：${rel}`);
     }
-    const orig = archiveOriginal(stamp.date, rel, abs);
-    appendRecord(stamp.date, {
+    const orig = archiveOriginal(date, rel, abs);
+    appendRecord(date, {
       t: stamp.hhmm,
       name: base,
       src: rel,
