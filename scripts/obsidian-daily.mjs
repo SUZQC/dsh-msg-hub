@@ -32,6 +32,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import net from "node:net";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -77,6 +78,30 @@ const IGNORE_DONE = process.env.OBSIDIAN_IGNORE_DONE === "1" || process.argv.inc
 
 function log(msg) {
   console.log(`[obsidian-daily] ${msg}`);
+}
+
+/** 代理端口探活：Clash Verge 没启动时直接说清楚，别报成 git 的 443 连不上 */
+function proxyAlive() {
+  if (!PROXY) return Promise.resolve(true);
+  let u;
+  try {
+    u = new URL(PROXY);
+  } catch {
+    return Promise.resolve(true);
+  }
+  const port = Number(u.port || (u.protocol === "https:" ? 443 : 80));
+  return new Promise((resolve) => {
+    const s = net.connect({ host: u.hostname, port });
+    const done = (ok) => {
+      try {
+        s.destroy();
+      } catch {}
+      resolve(ok);
+    };
+    s.setTimeout(1500, () => done(false));
+    s.once("connect", () => done(true));
+    s.once("error", () => done(false));
+  });
 }
 
 function die(msg) {
@@ -292,6 +317,11 @@ async function main() {
   log(`仓库 ${CFG.repo}`);
   log(`克隆 ${CFG.clone}｜稀疏 ${CFG.sparse}/｜群 ${CFG.groupKey.slice(0, 8)}…`);
   if (PROXY) log(`代理 ${PROXY}`);
+
+  if (!(await proxyAlive())) {
+    log(`代理没开：${PROXY} 连不上（Clash Verge 没启动？）——退出码 3，外层稍后再试`);
+    process.exit(3);
+  }
 
   const { cloned } = ensureRepo();
 
